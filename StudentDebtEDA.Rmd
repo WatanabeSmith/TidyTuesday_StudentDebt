@@ -1,0 +1,144 @@
+---
+title: "StudentDebtEDA"
+author: "Kevin Watanabe-Smith"
+date: "November 26, 2019"
+output: html_document
+---
+
+```{r}
+library(tidytuesdayR)
+library(tidyverse)
+library(skimr)
+library(lubridate)
+raw_data <- tidytuesdayR::tt_load(2019, week = 48)
+
+raw_data <- raw_data$loans
+
+skim(raw_data)
+count(raw_data, agency_name, sort = TRUE)
+head(raw_data)
+
+time_data <- raw_data %>% mutate(rough_month = ((quarter - 1) * 3) + 1) %>% 
+  mutate(date = ymd(paste0("20", year, "-", rough_month, "-01")))
+
+ggplot(time_data, aes(x = date, y = wage_garnishments)) +
+  geom_point() +
+  facet_wrap(~agency_name)
+
+ggplot(time_data, aes(x = date, y = starting)) +
+  geom_point() +
+  facet_wrap(~agency_name)
+```
+
+need to create a consolidation of agency names
+```{r}
+
+
+
+namelookup <- data.frame(various_names = c("ACT", "Action Financial Services*",
+                             "Central Research*", "Coast Professional Inc",
+                             "Credit Adjustments, Inc.*", "Credit Adjustments Inc",
+                             "FMS", "GC Services",
+                             "Immediate Credit Recovery", "National Recoveries Inc",
+                             "Pioneer", "Windham", "Collecto, INC dba EOS-CCA"), 
+           consensus_names = c("Account Control Technology, Inc.", "Action Financial Services",
+                               "Central Research", "Coast Professional, Inc.",
+                               "Credit Adjustments, Inc.", "Credit Adjustments, Inc.",
+                               "FMS Investment Corp", "GC Services LP",
+                               "Immediate Credit Recovery, Inc.", "National Recoveries, Inc.",
+                               "Pioneer Credit Recovery, Inc", "Windham Professionals, Inc.", "Collecto EOS-CCA"))
+
+combined_data <- time_data %>% left_join(namelookup, by = c("agency_name" = "various_names")) %>% 
+  mutate(consensus_names = as.character(consensus_names)) %>% 
+  mutate(agency = case_when(
+    is.na(consensus_names) ~ agency_name,
+    TRUE ~ consensus_names
+  )) %>% select(-agency_name, -consensus_names)
+
+```
+
+```{r}
+ggplot(time_data, aes(x = date, y = starting)) +
+  geom_point() +
+  facet_wrap(~agency_name)
+
+ggplot(combined_data, aes(x = date, y = starting)) +
+  #geom_point() +
+  geom_point(aes(y = wage_garnishments * 10), color = "red") +
+  #geom_point(aes(y = voluntary_payments), color = "green") +
+  #geom_point(aes(y = consolidation), color = "blue") +
+  geom_point(aes(y = rehabilitation) , color = "orange") +
+  facet_wrap(~agency)
+```
+
+```{r}
+rate_data <- combined_data %>% 
+  mutate(rate_wage_garnishments = wage_garnishments / starting) %>% 
+  mutate(rate_voluntary_payments = voluntary_payments / starting) %>% 
+  mutate(rate_consolidation = consolidation / starting) %>% 
+  mutate(rate_rehabilitation = rehabilitation / starting)
+
+ggplot(rate_data, aes(x = date, y = rate_wage_garnishments)) +
+  geom_point(color = "red") +
+  geom_point(aes(y = rate_rehabilitation), color = "orange") +
+  geom_point(aes(y = rate_consolidation), color = "blue") +
+  geom_point(aes(y = rate_voluntary_payments), color = "green") +
+  #geom_point(aes(y = starting / 1e10), color = "black") +
+  facet_wrap(~agency)
+
+ggplot(rate_data, aes(x = date, y = starting)) +
+  geom_point(color = "black") +
+  geom_point(aes(y = rehabilitation), color = "orange") +
+  facet_wrap(~agency)
+
+ggplot(rate_data, aes(x = date, y = rate_wage_garnishments)) +
+  geom_point(aes(y = rate_rehabilitation), color = "orange") +
+  geom_point(aes(y = rate_consolidation), color = "blue") +
+  facet_wrap(~agency)
+```
+
+```{r}
+total_rate_data <- combined_data %>% 
+  mutate(rate_wage_garnishments = wage_garnishments / total) %>% 
+  mutate(rate_voluntary_payments = voluntary_payments / total) %>% 
+  mutate(rate_consolidation = consolidation / total) %>% 
+  mutate(rate_rehabilitation = rehabilitation / total)
+
+longdata <- combined_data %>% select(agency, date, starting, total, wage_garnishments, voluntary_payments, consolidation, rehabilitation) %>% 
+  gather(key = type, value = amount, -agency, -date, -starting, -total) %>%
+  mutate(pct_of_balance = amount / starting) %>% 
+  mutate(pct_of_payments = amount / total)
+
+ggplot(longdata, aes(x = date, y = pct_of_balance, color = type)) +
+  geom_point() + 
+  facet_wrap(~agency)
+
+ggplot(longdata, aes(x = date, y = pct_of_payments, color = type)) +
+  geom_point() + 
+  geom_line() +
+  scale_color_manual(values = c("wage_garnishments" = "#F2274C", "rehabilitation" = "#F2B705", "consolidation" = "#F2C1B6", "voluntary_payments" = "#34BF8C"),
+                     name = "Payment Type") +
+  facet_wrap(~agency) + 
+  theme(strip.text = element_text(size = 7, color = "white"),
+        panel.background = element_rect(fill = "gray30"),
+        panel.grid = element_blank(),
+        plot.background = element_rect(fill = "gray15"),
+        strip.background = element_rect(fill = "gray40"),
+        axis.text = element_text(face = "bold", color = "white"),
+        axis.title = element_text(face = "bold", color = "white"),
+        legend.position = "top",
+        legend.background = element_rect(fill = "gray40"),
+        legend.text = element_text(face = "bold", color = "white"),
+        legend.key = element_rect(fill = "gray30"),
+        legend.title = element_text(face = "bold", color = "white"),
+        plot.title = element_text(face = "bold", color = "white", hjust = 0.5),
+        plot.subtitle = element_text(face = "bold", color = "white", hjust = 0.5),
+        plot.caption = element_text(face = "bold", color = "#F2B705")) +
+  labs(y = "Percent of Total Dollars Collected", x = "Date",
+       title = "Student Debt Collection Types by Agency",
+       subtitle = "Most collections are rehabilitation payments forced by loan default (often preceeded by agencies buying debt through consolidations)\nWage Garnishments spike in agencies leaving the field (especially mid 2017",
+       caption = "Kevin Watanabe-Smith, #TidyTuesday")
+
+ggsave("DebtCollectionByAgency.jpg", height = 8, width = 12)
+```
+
